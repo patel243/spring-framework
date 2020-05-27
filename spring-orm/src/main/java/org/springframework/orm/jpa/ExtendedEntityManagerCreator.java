@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2019 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -172,9 +172,7 @@ public abstract class ExtendedEntityManagerCreator {
 		Assert.notNull(emf, "EntityManagerFactory must not be null");
 		if (emf instanceof EntityManagerFactoryInfo) {
 			EntityManagerFactoryInfo emfInfo = (EntityManagerFactoryInfo) emf;
-			EntityManagerFactory nativeEmf = emfInfo.getNativeEntityManagerFactory();
-			EntityManager rawEntityManager = (!CollectionUtils.isEmpty(properties) ?
-					nativeEmf.createEntityManager(properties) : nativeEmf.createEntityManager());
+			EntityManager rawEntityManager = emfInfo.createNativeEntityManager(properties);
 			return createProxy(rawEntityManager, emfInfo, true, synchronizedWithTransaction);
 		}
 		else {
@@ -232,7 +230,7 @@ public abstract class ExtendedEntityManagerCreator {
 
 		if (emIfc != null) {
 			interfaces = cachedEntityManagerInterfaces.computeIfAbsent(emIfc, key -> {
-				Set<Class<?>> ifcs = new LinkedHashSet<>();
+				Set<Class<?>> ifcs = new LinkedHashSet<>(4);
 				ifcs.add(key);
 				ifcs.add(EntityManagerProxy.class);
 				return ClassUtils.toClassArray(ifcs);
@@ -240,9 +238,7 @@ public abstract class ExtendedEntityManagerCreator {
 		}
 		else {
 			interfaces = cachedEntityManagerInterfaces.computeIfAbsent(rawEm.getClass(), key -> {
-				Set<Class<?>> ifcs = new LinkedHashSet<>();
-				ifcs.addAll(ClassUtils
-						.getAllInterfacesForClassAsSet(key, cl));
+				Set<Class<?>> ifcs = new LinkedHashSet<>(ClassUtils.getAllInterfacesForClassAsSet(key, cl));
 				ifcs.add(EntityManagerProxy.class);
 				return ClassUtils.toClassArray(ifcs);
 			});

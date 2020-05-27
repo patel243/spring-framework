@@ -18,6 +18,7 @@ package org.springframework.http.codec.json;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
@@ -34,6 +35,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.ResolvableType;
 import org.springframework.core.codec.CodecException;
 import org.springframework.core.codec.DecodingException;
@@ -64,9 +66,9 @@ import static org.springframework.http.codec.json.Jackson2CodecSupport.JSON_VIEW
  */
 public class Jackson2JsonDecoderTests extends AbstractDecoderTests<Jackson2JsonDecoder> {
 
-	private Pojo pojo1 = new Pojo("f1", "b1");
+	private final Pojo pojo1 = new Pojo("f1", "b1");
 
-	private Pojo pojo2 = new Pojo("f2", "b2");
+	private final Pojo pojo2 = new Pojo("f2", "b2");
 
 
 	public Jackson2JsonDecoderTests() {
@@ -216,9 +218,39 @@ public class Jackson2JsonDecoderTests extends AbstractDecoderTests<Jackson2JsonD
 		);
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	public void decodeNonUtf8Encoding() {
+		Mono<DataBuffer> input = stringBuffer("{\"foo\":\"bar\"}", StandardCharsets.UTF_16);
+
+		testDecode(input, ResolvableType.forType(new ParameterizedTypeReference<Map<String, String>>() {
+				}),
+				step -> step.assertNext(o -> assertThat((Map<String, String>) o).containsEntry("foo", "bar"))
+						.verifyComplete(),
+				MediaType.parseMediaType("application/json; charset=utf-16"),
+				null);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void decodeMonoNonUtf8Encoding() {
+		Mono<DataBuffer> input = stringBuffer("{\"foo\":\"bar\"}", StandardCharsets.UTF_16);
+
+		testDecodeToMono(input, ResolvableType.forType(new ParameterizedTypeReference<Map<String, String>>() {
+				}),
+				step -> step.assertNext(o -> assertThat((Map<String, String>) o).containsEntry("foo", "bar"))
+						.verifyComplete(),
+				MediaType.parseMediaType("application/json; charset=utf-16"),
+				null);
+	}
+
 	private Mono<DataBuffer> stringBuffer(String value) {
+		return stringBuffer(value, StandardCharsets.UTF_8);
+	}
+
+	private Mono<DataBuffer> stringBuffer(String value, Charset charset) {
 		return Mono.defer(() -> {
-			byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+			byte[] bytes = value.getBytes(charset);
 			DataBuffer buffer = this.bufferFactory.allocateBuffer(bytes.length);
 			buffer.write(bytes);
 			return Mono.just(buffer);

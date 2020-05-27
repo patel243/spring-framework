@@ -62,6 +62,7 @@ import com.fasterxml.jackson.databind.deser.BasicDeserializerFactory;
 import com.fasterxml.jackson.databind.deser.Deserializers;
 import com.fasterxml.jackson.databind.deser.std.DateDeserializers;
 import com.fasterxml.jackson.databind.introspect.AnnotationIntrospectorPair;
+import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.introspect.NopAnnotationIntrospector;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.module.SimpleSerializers;
@@ -287,7 +288,7 @@ public class Jackson2ObjectMapperBuilderTests {
 				.build();
 		DateTime dateTime = new DateTime(1322903730000L, DateTimeZone.UTC);
 		assertThat(new String(objectMapper.writeValueAsBytes(dateTime), "UTF-8")).isEqualTo("1322903730000");
-		assertThat(new String(objectMapper.writeValueAsBytes(new Integer(4)), "UTF-8")).contains("customid");
+		assertThat(new String(objectMapper.writeValueAsBytes(4), "UTF-8")).contains("customid");
 	}
 
 	@Test  // SPR-12634
@@ -300,7 +301,7 @@ public class Jackson2ObjectMapperBuilderTests {
 				.build();
 		DateTime dateTime = new DateTime(1322903730000L, DateTimeZone.UTC);
 		assertThat(new String(objectMapper.writeValueAsBytes(dateTime), "UTF-8")).isEqualTo("1322903730000");
-		assertThat(new String(objectMapper.writeValueAsBytes(new Integer(4)), "UTF-8")).contains("customid");
+		assertThat(new String(objectMapper.writeValueAsBytes(4), "UTF-8")).contains("customid");
 	}
 
 	@Test  // SPR-12634
@@ -311,7 +312,7 @@ public class Jackson2ObjectMapperBuilderTests {
 				.serializerByType(Integer.class, new CustomIntegerSerializer()).build();
 		DateTime dateTime = new DateTime(1322903730000L, DateTimeZone.UTC);
 		assertThat(new String(objectMapper.writeValueAsBytes(dateTime), "UTF-8")).isEqualTo("1322903730000");
-		assertThat(new String(objectMapper.writeValueAsBytes(new Integer(4)), "UTF-8")).contains("customid");
+		assertThat(new String(objectMapper.writeValueAsBytes(4), "UTF-8")).contains("customid");
 	}
 
 	@Test  // gh-22576
@@ -429,6 +430,20 @@ public class Jackson2ObjectMapperBuilderTests {
 		output = objectMapper.writeValueAsString(bean);
 		assertThat(output).contains("value1");
 		assertThat(output).doesNotContain("value2");
+	}
+
+	@Test // gh-23017
+	public void postConfigurer() {
+
+		JacksonAnnotationIntrospector introspector1 = new JacksonAnnotationIntrospector();
+		JacksonAnnotationIntrospector introspector2 = new JacksonAnnotationIntrospector();
+
+		ObjectMapper mapper = Jackson2ObjectMapperBuilder.json()
+				.postConfigurer(m -> m.setAnnotationIntrospectors(introspector1, introspector2))
+				.build();
+
+		assertThat(mapper.getSerializationConfig().getAnnotationIntrospector()).isSameAs(introspector1);
+		assertThat(mapper.getDeserializationConfig().getAnnotationIntrospector()).isSameAs(introspector2);
 	}
 
 	@Test
