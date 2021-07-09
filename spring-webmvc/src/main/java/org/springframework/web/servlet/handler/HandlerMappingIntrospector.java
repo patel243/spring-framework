@@ -19,10 +19,11 @@ package org.springframework.web.servlet.handler;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -81,8 +82,7 @@ public class HandlerMappingIntrospector
 	@Nullable
 	private List<HandlerMapping> handlerMappings;
 
-	@Nullable
-	private Map<HandlerMapping, PathPatternMatchableHandlerMapping> pathPatternHandlerMappings = new ConcurrentHashMap<>();
+	private Map<HandlerMapping, PathPatternMatchableHandlerMapping> pathPatternHandlerMappings = Collections.emptyMap();
 
 
 	/**
@@ -104,7 +104,7 @@ public class HandlerMappingIntrospector
 
 
 	/**
-	 * Return the configured or detected HandlerMapping's.
+	 * Return the configured or detected {@code HandlerMapping}s.
 	 */
 	public List<HandlerMapping> getHandlerMappings() {
 		return (this.handlerMappings != null ? this.handlerMappings : Collections.emptyList());
@@ -138,16 +138,17 @@ public class HandlerMappingIntrospector
 	 */
 	@Nullable
 	public MatchableHandlerMapping getMatchableHandlerMapping(HttpServletRequest request) throws Exception {
-		HttpServletRequest wrappedRequest = new RequestAttributeChangeIgnoringWrapper(request);
+		HttpServletRequest wrappedRequest = new AttributesPreservingRequest(request);
 		return doWithMatchingMapping(wrappedRequest, false, (matchedMapping, executionChain) -> {
 			if (matchedMapping instanceof MatchableHandlerMapping) {
 				PathPatternMatchableHandlerMapping mapping = this.pathPatternHandlerMappings.get(matchedMapping);
 				if (mapping != null) {
-					RequestPath requestPath = ServletRequestPathUtils.getParsedRequestPath(request);
-					return mapping.decorate(requestPath);
+					RequestPath requestPath = ServletRequestPathUtils.getParsedRequestPath(wrappedRequest);
+					return new PathSettingHandlerMapping(mapping, requestPath);
 				}
 				else {
-					return (MatchableHandlerMapping) matchedMapping;
+					String lookupPath = (String) wrappedRequest.getAttribute(UrlPathHelper.PATH_ATTRIBUTE);
+					return new PathSettingHandlerMapping((MatchableHandlerMapping) matchedMapping, lookupPath);
 				}
 			}
 			throw new IllegalStateException("HandlerMapping is not a MatchableHandlerMapping");
@@ -157,7 +158,7 @@ public class HandlerMappingIntrospector
 	@Override
 	@Nullable
 	public CorsConfiguration getCorsConfiguration(HttpServletRequest request) {
-		RequestAttributeChangeIgnoringWrapper wrappedRequest = new RequestAttributeChangeIgnoringWrapper(request);
+		AttributesPreservingRequest wrappedRequest = new AttributesPreservingRequest(request);
 		return doWithMatchingMappingIgnoringException(wrappedRequest, (handlerMapping, executionChain) -> {
 			for (HandlerInterceptor interceptor : executionChain.getInterceptorList()) {
 				if (interceptor instanceof CorsConfigurationSource) {
@@ -177,7 +178,6 @@ public class HandlerMappingIntrospector
 			BiFunction<HandlerMapping, HandlerExecutionChain, T> matchHandler) throws Exception {
 
 		Assert.notNull(this.handlerMappings, "Handler mappings not initialized");
-		Assert.notNull(this.pathPatternHandlerMappings, "Handler mappings with PathPatterns not initialized");
 
 		boolean parseRequestPath = !this.pathPatternHandlerMappings.isEmpty();
 		RequestPath previousPath = null;
@@ -244,6 +244,7 @@ public class HandlerMappingIntrospector
 		catch (IOException ex) {
 			throw new IllegalStateException("Could not load '" + path + "': " + ex.getMessage());
 		}
+
 		String value = props.getProperty(HandlerMapping.class.getName());
 		String[] names = StringUtils.commaDelimitedListToStringArray(value);
 		List<HandlerMapping> result = new ArrayList<>(names.length);
@@ -272,19 +273,83 @@ public class HandlerMappingIntrospector
 
 
 	/**
-	 * Request wrapper that ignores request attribute changes.
+	 * Request wrapper that buffers request attributes in order protect the
+	 * underlying request from attribute changes.
 	 */
-	private static class RequestAttributeChangeIgnoringWrapper extends HttpServletRequestWrapper {
+	private static class AttributesPreservingRequest extends HttpServletRequestWrapper {
 
-		RequestAttributeChangeIgnoringWrapper(HttpServletRequest request) {
+		private final Map<String, Object> attributes;
+
+		AttributesPreservingRequest(HttpServletRequest request) {
 			super(request);
+			this.attributes = initAttributes(request);
+		}
+
+		private Map<String, Object> initAttributes(HttpServletRequest request) {
+			Map<String, Object> map = new HashMap<>();
+			Enumeration<String> names = request.getAttributeNames();
+			while (names.hasMoreElements()) {
+				String name = names.nextElement();
+				map.put(name, request.getAttribute(name));
+			}
+			return map;
 		}
 
 		@Override
 		public void setAttribute(String name, Object value) {
-			if (name.equals(ServletRequestPathUtils.PATH_ATTRIBUTE) || name.equals(UrlPathHelper.PATH_ATTRIBUTE)) {
-				super.setAttribute(name, value);
-			}
+			this.attributes.put(name, value);
+		}
+
+		@Override
+		public Object getAttribute(String name) {
+			return this.attributes.get(name);
+		}
+
+		@Override
+		public Enumeration<String> getAttributeNames() {
+			return Collections.enumeration(this.attributes.keySet());
+		}
+
+		@Override
+		public void removeAttribute(String name) {
+			this.attributes.remove(name);
 		}
 	}
+
+
+	private static class PathSettingHandlerMapping implements MatchableHandlerMapping {
+
+		private final MatchableHandlerMapping delegate;
+
+		private final Object path;
+
+		private final String pathAttributeName;
+
+		PathSettingHandlerMapping(MatchableHandlerMapping delegate, Object path) {
+			this.delegate = delegate;
+			this.path = path;
+			this.pathAttributeName = (path instanceof RequestPath ?
+					ServletRequestPathUtils.PATH_ATTRIBUTE : UrlPathHelper.PATH_ATTRIBUTE);
+		}
+
+		@Nullable
+		@Override
+		public RequestMatchResult match(HttpServletRequest request, String pattern) {
+			Object previousPath = request.getAttribute(this.pathAttributeName);
+			request.setAttribute(this.pathAttributeName, this.path);
+			try {
+				return this.delegate.match(request, pattern);
+			}
+			finally {
+				request.setAttribute(this.pathAttributeName, previousPath);
+			}
+		}
+
+		@Nullable
+		@Override
+		public HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+			return this.delegate.getHandler(request);
+		}
+	}
+
 }
